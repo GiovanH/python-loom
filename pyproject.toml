@@ -1,9 +1,20 @@
+[project]
+name = "loom"
+version = "0.0.1"
+authors = [
+  { name="GiovanH" },
+]
+description = "Threading tools"
+readme = "README.md"
+requires-python = ">=3.8"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+
 [build-system]
 requires = ["setuptools", "wheel"]
 build-backend = "setuptools.build_meta"
-
-[tool.black]
-target-version = ["py38"]
 
 # pyproject.toml
 [tool.pytest.ini_options]
