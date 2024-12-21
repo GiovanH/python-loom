@@ -7,6 +7,8 @@ import sys
 import tqdm
 from tqdm.contrib import DummyTqdmFile
 
+from typing import Optional, Self, Callable, TextIO, Any
+
 
 class ThreadSpool():
 
@@ -19,7 +21,7 @@ class ThreadSpool():
     based on whether or not it's using a progress bar.
     """
 
-    def __init__(self, quota=8, name="Spool", belay=False, use_progbar=True):
+    def __init__(self, quota: int = 8, name: str = "Spool", start=True, use_progbar=True) -> None:
         """Create a spool
 
         Args:
@@ -27,26 +29,26 @@ class ThreadSpool():
             cfinish (dict, optional): Description
         """
         super().__init__()
-        self.quota = quota
-        self.name = name
-        self.use_progbar = use_progbar
+        self.quota: int = quota
+        self.name: str = name
+        self.use_progbar: bool = use_progbar
 
-        self.queue = []
-        self.started_threads = []
+        self.queue: list[threading.Thread] = []
+        self.started_threads: list[threading.Thread] = []
 
-        self.flushing = 0
-        self._pbar_max = 0
-        self.spoolThread = None
-        self.background_spool = False
-        self.may_have_room = threading.Event()
+        self.flushing: int = 0
+        self._pbar_max: int = 0
+        self.spoolThread: Optional[threading.Thread] = None
+        self.background_spool: bool = False
+        self.may_have_room: threading.Event = threading.Event()
 
-        if not belay:
+        if start:
             self.start()
 
-    def __enter__(self):
+    def __enter__(self) -> Self:
         return self
 
-    def __exit__(self, type_, value, traceback):
+    def __exit__(self, type_, value, traceback) -> None:
         try:
             self.finish(resume=False)
         except KeyboardInterrupt:
@@ -55,12 +57,12 @@ class ThreadSpool():
             self.queue = []
             raise
 
-    def __str__(self):
+    def __str__(self) -> str:
         return f"{type(self)} at {hex(id(self))}: {self.numRunningThreads}/{self.quota} threads running with {len(self.queue)} queued."
 
     # Interfaces
 
-    def print(self, *args, **kwargs):
+    def print(self, *args, **kwargs) -> None:
         if self.progbar:
             self.progbar.write(
                 kwargs.get("sep", " ").join(args)
@@ -68,7 +70,7 @@ class ThreadSpool():
         else:
             print(*args, **kwargs)
 
-    def start(self):
+    def start(self) -> None:
         """Begin spooling threads in the background, if not already doing so.
         """
         self.background_spool = True
@@ -77,13 +79,28 @@ class ThreadSpool():
             self.spoolThread.start()
             self.may_have_room.set()
 
-    def cancel(self):
+    def cancel(self) -> None:
         """Abort immeditately, potentially without finishing threads.
         """
         self.queue.clear()
         self.finish()
 
-    def finish(self, resume=False, verbose=False, use_pbar=None):
+    # Progress bar management, optional.
+    def updateProgressBar(self, progbar):
+        # Update progress bar.
+        q = (len(self.queue) if self.queue else 0)
+        progress = (self._pbar_max - (self.numRunningThreads + q))
+        # progress = (self._pbar_max - q)
+        if progress < 0:
+            # print(f"{progress=} {self._pbar_max=} {self.numRunningThreads=} {q=}")
+            progress = 0
+
+        progbar.total = self._pbar_max
+        progbar.n = progress
+        progbar.set_postfix(queue=q, running=f"{self.numRunningThreads:2}/{self.quota}]")
+        progbar.update(0)
+
+    def finish(self, resume=False, verbose=False, use_pbar=None) -> None:
         """Block and complete all threads in queue.
 
         Args:
@@ -104,30 +121,20 @@ class ThreadSpool():
         if verbose:
             print(self)
 
-        # Progress bar management, optional.
-        def updateProgressBar():
-            # Update progress bar.
-            if use_pbar:
-                q = (len(self.queue) if self.queue else 0)
-                progress = (self._pbar_max - (self.numRunningThreads + q))
-                # progress = (self._pbar_max - q)
-                if progress < 0:
-                    # print(f"{progress=} {self._pbar_max=} {self.numRunningThreads=} {q=}")
-                    progress = 0
+        progbar: Optional[tqdm.tqdm] = None
 
-                progbar.total = self._pbar_max
-                progbar.n = progress
-                progbar.set_postfix(queue=q, running=f"{self.numRunningThreads:2}/{self.quota}]")
-                progbar.update(0)
+        def updateProgressBar():
+            if use_pbar:
+                self.updateProgressBar(progbar)
 
         self._pbar_max = self.numRunningThreads + (len(self.queue) if self.queue else 0)
 
         if self._pbar_max > 0:
+            orig_out_err: tuple[TextIO, TextIO] = sys.stdout, sys.stderr
 
             try:
                 if use_pbar:
-                    orig_out_err = sys.stdout, sys.stderr
-                    sys.stdout, sys.stderr = map(DummyTqdmFile, orig_out_err)
+                    sys.stdout, sys.stderr = map(DummyTqdmFile, orig_out_err)  # type: ignore[assignment]
                     self.progbar = progbar = tqdm.tqdm(
                         file=orig_out_err[0], dynamic_ncols=True,
                         desc=self.name,
@@ -149,7 +156,7 @@ class ThreadSpool():
                     raise AssertionError("Finished without finishing all threads")
 
             finally:
-                if use_pbar:
+                if use_pbar and progbar:
                     progbar.close()
                     sys.stdout, sys.stderr = orig_out_err
 
@@ -160,12 +167,12 @@ class ThreadSpool():
         if verbose:
             print(self)
 
-    def flush(self):
+    def flush(self) -> None:
         """Start and finishes all current threads before starting any new ones.
         """
         self.flushing = 1
 
-    def enqueue(self, target, args=None, kwargs=None, *thargs, **thkwargs):
+    def enqueue(self, target, args: Optional[tuple] = None, kwargs: Optional[dict[str, Any]] = None, *thargs, **thkwargs) -> None:
         """Add a thread to the back of the queue.
 
         Args:
@@ -193,7 +200,7 @@ class ThreadSpool():
         self._pbar_max += 1
         self.may_have_room.set()
 
-    def setQuota(self, new_quota):
+    def setQuota(self, new_quota: int) -> None:
         self.quota = new_quota
         self.may_have_room.set()
 
@@ -201,13 +208,13 @@ class ThreadSpool():
     # Minor utility
     ##################
 
-    def startThread(self, new_thread):
+    def startThread(self, new_thread: threading.Thread) -> None:
         self.started_threads.append(new_thread)
         new_thread.start()
         # self.may_have_room.set()
 
     @property
-    def numRunningThreads(self):
+    def numRunningThreads(self) -> int:
         """Accurately count number of "our" running threads.
 
         Returns:
@@ -223,7 +230,7 @@ class ThreadSpool():
     # Spooling
     ##################
 
-    def spoolLoop(self, verbose=False):
+    def spoolLoop(self, verbose=False) -> None:
         """Periodically start additional threads, if we have the resources to do so.
         This function is intended to be run as a thread.
         Runs until the queue is empty or, if self.background_spool is true, runs forever.
@@ -241,7 +248,7 @@ class ThreadSpool():
             self.doSpool(verbose=verbose)
         # print("Terminating spoolLoop")
 
-    def doSpool(self, verbose=False, callbacks=None):
+    def doSpool(self, verbose=False, callbacks: Optional[list[Callable]] = None) -> None:
         """Spools new threads until the queue empties or the quota fills.
 
         Args:
@@ -264,7 +271,7 @@ class ThreadSpool():
             if verbose:
                 print(self)
             threads_to_queue = min(len(self.queue), self.quota - self.numRunningThreads)
-            for i in range(threads_to_queue):
+            for _i in range(threads_to_queue):
                 try:
                     self.startThread(self.queue.pop())
                 except IndexError:
